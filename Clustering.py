@@ -1,8 +1,8 @@
 import pandas as pd
-import numpy as np
+import geopandas as gpd
+from shapely.geometry import Point
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+import contextily as ctx
 
 df = pd.read_csv('BA.csv')
 # BA is a dataset containing the location, date, and age of fatal bear attack victims. It has categorical and numerical data with missing age,
@@ -15,40 +15,54 @@ numerical_cols = df.select_dtypes(include=['float64', 'int64']).columns
 categorical_cols = df.select_dtypes(include=['object']).columns
 
 df[numerical_cols] = df[numerical_cols].fillna(df[numerical_cols].mean())
-
 df[categorical_cols] = df[categorical_cols].fillna(df[categorical_cols].mode().iloc[0])
+# Database processing
 
 numerical_features = ['Longitude', 'Latitude']
 X = df[numerical_features]
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-
-k = 5 # Selected as there appear to be 5 centralized locations based on a quick overlook.
+k = 6
 kmeans = KMeans(n_clusters=k, random_state=42)
 kmeans.fit(X_scaled)
 
 df['Cluster'] = kmeans.labels_
 
 centroids = scaler.inverse_transform(kmeans.cluster_centers_)
-centroid_longitude = centroids[:, 0]  # First column for Longitude
-centroid_latitude = centroids[:, 1]    # Second column for Latitude
+centroid_longitude = centroids[:, 0]
+centroid_latitude = centroids[:, 1]
 
-plt.figure(figsize=(10, 6))
-plt.scatter(X['Longitude'], X['Latitude'], c=df['Cluster'], cmap='viridis', s=50)
+# Create a GeoDataFrame for bear attack points and centroids
+geometry_points = [Point(xy) for xy in zip(df['Longitude'], df['Latitude'])]
+gdf_points = gpd.GeoDataFrame(df, geometry=geometry_points, crs="EPSG:4326")
 
-plt.scatter(centroid_longitude, centroid_latitude, 
-            s=200, c='red', label='Centroids', marker='X')
-plt.title('Locations of Bear attacks through k-means clustering')
-plt.xlabel('Longitude')
-plt.ylabel('Latitude')
+centroids_df = pd.DataFrame({'Longitude': centroid_longitude, 'Latitude': centroid_latitude})
+geometry_centroids = [Point(xy) for xy in zip(centroids_df['Longitude'], centroids_df['Latitude'])]
+gdf_centroids = gpd.GeoDataFrame(centroids_df, geometry=geometry_centroids, crs="EPSG:4326")
+
+# Plotting the data on a map with OpenStreetMap and focusing on North America
+fig, ax = plt.subplots(figsize=(12, 8))
+
+# Plot bear attack points
+gdf_points.plot(ax=ax, markersize=10, alpha=0.7, column='Cluster', cmap='viridis', legend=True)
+
+# Plot centroids
+gdf_centroids.plot(ax=ax, color='red', marker='X', markersize=100, label='Centroids')
+
+# Add OpenStreetMap basemap (zoomed on North America)
+ax.set_xlim([-180, -50])  # Longitude range for North America
+ax.set_ylim([10, 80])     # Latitude range for North America
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik, zoom=4, crs=gdf_points.crs.to_string())
+
+# Set plot titles and labels
+ax.set_title('Bear Attack Locations with Clusters Overlayed on North America Map', fontsize=15)
+ax.set_xlabel('Longitude', fontsize=12)
+ax.set_ylabel('Latitude', fontsize=12)
 plt.legend()
-plt.grid(True)
 plt.show()
 
-print(f'Cluster Centers (Original):\n{scaler.inverse_transform(kmeans.cluster_centers_)}')
-print(f'Cluster Counts:\n{df["Cluster"].value_counts()}')
-
-# The location of bear locations are clustered around 5 major regions. Overlapping them with a photo of the region from google maps present the 
-# clusters to be around Alaska, NorthWest Territories, Sasketchewan, Colorado, and Pennsylvania. 
